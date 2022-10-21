@@ -1,9 +1,5 @@
-# MSCLAR note: code extracted from https://huggingface.co/blog/how-to-generate
-
 import argparse
-import json
 import os
-import random
 import torch
 
 from datasets import load_dataset, DatasetDict, Dataset
@@ -11,14 +7,11 @@ from transformers import EvalPrediction, AutoTokenizer, TrainingArguments, AutoM
 
 from finetune_BottleSelf_new import END_TOKEN_GENERATIONS, DELIMITER
 
-discrimination_data_path = 'grover-models/discrimination-data'
-finetuned_models_dir = 'finetuned-models'
 output_dir = 'generated-datasets'
 data_dir = '/gscratch/xlab/msclar/'
 
 if not torch.cuda.is_available():
     data_dir = './'
-    discrimination_data_path = './'
 
 cache_dir = os.path.join(data_dir, '.cache')
 max_sentence_length = 200
@@ -74,13 +67,8 @@ def load_any_dataset(original_sentence_filename, delim, end_token, chunk_id_to_s
 
 
 def main(args):
-    assert args.top_p or args.top_k or args.n_beams
-
-    if args.top_p:
-        top_p_string = f'{args.top_p:.2f}' if args.top_p else 'None'
-        extended_decoding = f'p={top_p_string}-temp={args.temperature}-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
-    else:
-        extended_decoding = f'p=None-temp={args.temperature}-k={args.top_k}-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
+    assert args.n_beams
+    extended_decoding = f'p=None-temp=None-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
 
     if args.filepath_to_summarize:
         extended_decoding = args.filepath_to_summarize
@@ -103,12 +91,6 @@ def main(args):
         'max_length': max_sentence_length * 2,
         'repetition_penalty': args.repetition_penalty
     }
-    if args.temperature:
-        params['temperature'] = args.temperature
-    if args.top_k:
-        params['top_k'] = args.top_k
-    if args.top_p:
-        params['top_p'] = args.top_p
     if args.n_beams:
         params['num_beams'] = args.n_beams
         params['early_stopping'] = True
@@ -131,46 +113,6 @@ def main(args):
             dataset, valid_ids_by_chunk_id, invalid_ids_by_chunk_id = load_unseen_realnews_dataset(
                 'outputs/realnews_100k', delim=DELIMITER, end_token=END_TOKEN_GENERATIONS,
                 chunk_id_to_search=chunk_id, max_sentences=args.max_sentences)
-
-        """
-        dataset = dataset.map(
-            lambda batch: tokenizer(batch["text"], max_length=max_two_sentence_sizes, truncation=True, padding="max_length"),
-            batched=True)
-        print(dataset)
-
-        generated_texts = []
-
-        # batched text generation: https://github.com/huggingface/transformers/pull/7552#issue-497255933
-        print('batches', (len(dataset) + args.batch_size - 1) // args.batch_size)
-        for n_batch in range((len(dataset) + args.batch_size - 1) // args.batch_size):
-            print(n_batch)
-            lowerbound = n_batch * args.batch_size
-            upperbound = (n_batch + 1) * args.batch_size
-
-            new_params = params.copy()
-            new_params['input_ids'] = torch.LongTensor(dataset['input_ids'][lowerbound:upperbound]).to(device)
-            new_params['attention_mask'] = torch.LongTensor(dataset['attention_mask'][lowerbound:upperbound]).to(device)
-            sample_output = model.generate(**new_params)
-
-            tmp = list(dataset.filter(lambda e, i: lowerbound <= i < upperbound, with_indices=True))
-            for i in range(min(args.batch_size, len(sample_output))):
-                full_text_decoded = tokenizer.decode(sample_output[i], skip_special_tokens=True)
-                split_decoded = full_text_decoded.split(DELIMITER)
-                if len(split_decoded) < 2:
-                    # sentence is too long and delimiter was erased by the tokenizer
-                    tmp[i]['article'] = ""
-                    del tmp[i]['input_ids']
-                    del tmp[i]['attention_mask']
-                    del tmp[i]['text']  # temporary column for tokenized text
-                    continue
-
-                tmp[i]['article'] = split_decoded[1].split(END_TOKEN_GENERATIONS)[0].strip()
-                del tmp[i]['input_ids']
-                del tmp[i]['attention_mask']
-                del tmp[i]['text']  # temporary column for tokenized text
-
-            generated_texts.extend([e['article'] for e in tmp])
-        """
 
         generated_texts = []
 
@@ -228,10 +170,9 @@ def main(args):
                         break
 
                 full_text_decoded = tokenizer.decode(tokens, skip_special_tokens=True)
-                full_text_decoded = full_text_decoded.split('Δ')[0]
+                full_text_decoded = full_text_decoded.split(END_TOKEN_GENERATIONS)[0]
                 tmp[i]['article'] = full_text_decoded.strip()
 
-            print('lala', tmp)
             generated_texts.extend([e['article'] for e in tmp])
 
         valid_ids = valid_ids_by_chunk_id[chunk_id]
@@ -261,12 +202,7 @@ if __name__ == "__main__":
                     'and a finetuned GPT2 model, and completing with a summary.')
     parser.add_argument('--finetuned_model_path', type=str)
     parser.add_argument('--model_type', type=str, default='gpt2')
-
-    parser.add_argument('--top_p', type=float, default=None)
-    parser.add_argument('--temperature', type=float, default=None)
-    parser.add_argument('--top_k', type=int, default=None)
-    parser.add_argument('--n_beams', type=int, default=None)
-
+    parser.add_argument('--n_beams', type=int, required=True)
     parser.add_argument('--batch_size', type=int, default=32)
     parser.add_argument('--max_sentences', type=int, default=-1)
     parser.add_argument('--repetition_penalty', type=float, default=1.0)

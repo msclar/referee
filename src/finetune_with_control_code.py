@@ -1,15 +1,15 @@
 # coding=utf-8
-import os
-import gc
 import argparse
-import torch
-import numpy as np
+import gc
+import os
 from collections import Counter
 
-from datasets import load_dataset, DatasetDict, Dataset, concatenate_datasets
+import numpy as np
+import torch
+from datasets import Dataset, concatenate_datasets
+from pynvml import *
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, \
     AutoModelForCausalLM, AutoModelForSequenceClassification
-from pynvml import *
 
 cache_dir = '/gscratch/xlab/msclar/.cache'
 filtered_datasets_dir = 'filtered-datasets'
@@ -27,11 +27,7 @@ max_two_sentences_length = max_sentence_length * 2
 
 # original_sentence Ξ 1 1 1 1 1 1 1 1 TL;DR: ...
 
-BUCKET_STRUCTURES = {
-    'original_fourway_bucket': [(0, 0.4), (0.4, 0.6), (0.6, 0.8), (0.8, 1.0)],
-    'fiveway_bucket': [(i / 5, (i + 1) / 5) for i in range(5)],
-    'tenway_bucket': [(i / 10, (i + 1) / 10) for i in range(10)]
-}
+BUCKET_STRUCTURE = [(i / 10, (i + 1) / 10) for i in range(10)]
 
 
 def get_average_logprobs(model, encoder, target):
@@ -73,9 +69,9 @@ def get_average_logprobs(model, encoder, target):
     return np.mean(nll_list)
 
 
-def get_bucket(summary_ratio, bucket_structure_id, repeat_bucket_id_to_fixate_idea):
+def get_bucket(summary_ratio, repeat_bucket_id_to_fixate_idea):
     bucket_id = -1
-    for i, (lower, upper) in enumerate(BUCKET_STRUCTURES[bucket_structure_id]):
+    for i, (lower, upper) in enumerate(BUCKET_STRUCTURE):
         if lower <= summary_ratio < upper:
             bucket_id = i
             break
@@ -84,21 +80,6 @@ def get_bucket(summary_ratio, bucket_structure_id, repeat_bucket_id_to_fixate_id
     if repeat_bucket_id_to_fixate_idea and bucket_id != -1:
         bucket_id = " ".join([str(bucket_id) for _ in range(10)])
     return bucket_id
-
-
-def print_gpu_utilization():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print(f"GPU memory occupied: {info.used//1024**2} MB.")
-
-
-#def format_realnews_dataset(dataset_input, tokenizer):
-#    dataset = dataset_input.map(
-#        lambda batch: tokenizer(batch["text"], max_length=max_sentence_length, truncation=True, padding="max_length"),
-#        batched=True)
-#    dataset.set_format(type="torch", columns=["input_ids"])
-#    return dataset
 
 
 def load_dataset_as_pair_from_path(original_sentences_path_filename, summary_path_filename):
@@ -122,7 +103,7 @@ def load_summary_dataset_as_pairs(summary_path, dataset_paths, min_chunk_num=-1,
         files = dataset_paths.split(',')
         dataset_lines = []
         for i in range(0, len(files), 2):
-            dataset_lines.extend(load_dataset_as_pair_from_path(files[i], files[i+1]))
+            dataset_lines.extend(load_dataset_as_pair_from_path(files[i], files[i + 1]))
         return dataset_lines
 
     import re
@@ -205,24 +186,14 @@ def main(args):
         lambda x: END_TOKEN_GENERATIONS not in x['s1'] and END_TOKEN_GENERATIONS not in x['s1_summary'])
     dataset = dataset.filter(lambda x: (1 - args.compression_rate) * len(x['s1']) > len(x['s1_summary']))
     dataset = dataset.map(lambda x: {
-        "compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']),
-                                              args.bucket_structure_id, args.repeat_bucket_id_to_fixate_idea)})
+        "compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']), args.repeat_bucket_id_to_fixate_idea)})
     dataset = dataset.filter(lambda x: x['compression_rate_bucket'] != -1)
-    print(dataset)
-    dataset = rebalance_dataset_respecting_order(dataset, min_samples=4 * args.min_samples_per_class_in_rebalanced_dataset)
-    print('pre wanli filter')
-    for k, v in Counter(dataset['compression_rate_bucket']).most_common():
-        print(k, v)
-    print()
-
-    for k, v in Counter(dataset['compression_rate_bucket']).most_common():
-        for a, v2 in Counter(dataset.filter(lambda x: x['compression_rate_bucket'] == k)['file']).most_common():
-            print(k, v, a, v2)
-        print()
-    print()
+    dataset = rebalance_dataset_respecting_order(
+        dataset, min_samples=4 * args.min_samples_per_class_in_rebalanced_dataset)
 
     if args.filter_dataset_based_on_nli:
-        model_wanli = AutoModelForSequenceClassification.from_pretrained('alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
+        model_wanli = AutoModelForSequenceClassification.from_pretrained(
+            'alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
         tokenizer_wanli = AutoTokenizer.from_pretrained('alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
 
         dataset = dataset.map(
@@ -245,11 +216,11 @@ def main(args):
         del model_wanli
         del tokenizer_wanli
     else:
-        pass  # 0 / 0
+        pass
 
     dataset = dataset.map(lambda x: {
         "compression_rate_bucket": get_bucket(
-            len(x['s1_summary']) / len(x['s1']), args.bucket_structure_id, args.repeat_bucket_id_to_fixate_idea)})
+            len(x['s1_summary']) / len(x['s1']), args.repeat_bucket_id_to_fixate_idea)})
 
     dataset = dataset.map(lambda x: {"text": FULL_SENTENCE_FORMAT.format(
         original_sentence=x['s1'], CONTROL_CODE_TOKEN=CONTROL_CODE_TOKEN,
@@ -265,51 +236,38 @@ def main(args):
         tokenizer_gpt2 = AutoTokenizer.from_pretrained('gpt2-large', cache_dir=cache_dir)
         tokenizer_gpt2.pad_token = tokenizer_gpt2.eos_token
 
-        print('pre fluency filter')
-        print(dataset)
         dataset = dataset.filter(
-            lambda x: get_average_logprobs(model_gpt2, tokenizer_gpt2, x['s1_summary']) / get_average_logprobs(model_gpt2, tokenizer_gpt2, x['s1']) < args.fluency_ratio_boundary,
+            lambda x: get_average_logprobs(model_gpt2, tokenizer_gpt2, x['s1_summary']) / get_average_logprobs(
+                model_gpt2, tokenizer_gpt2, x['s1']) < args.fluency_ratio_boundary,
             batched=False)
-        print('post fluency filter')
-        print(dataset)
         del model_gpt2
         del tokenizer_gpt2
-    dataset = rebalance_dataset_respecting_order(dataset, min_samples=args.min_samples_per_class_in_rebalanced_dataset)
 
-    print('final stats')
-    for k, v in Counter(dataset['compression_rate_bucket']).most_common():
-        print(k, v)
-    print()
-    for k, v in Counter(dataset['compression_rate_bucket']).most_common():
-        for a, v2 in Counter(dataset.filter(lambda x: x['compression_rate_bucket'] == k)['file']).most_common():
-            print(k, v, a, v2)
-        print()
-    print()
+    dataset = rebalance_dataset_respecting_order(dataset, min_samples=args.min_samples_per_class_in_rebalanced_dataset)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_type, cache_dir=cache_dir)
     if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI'):
         tokenizer.pad_token = tokenizer.eos_token  # required for GPT2 but not RoBERTa
 
     dataset = dataset.map(
-        lambda batch: tokenizer(batch["text"], max_length=min(max_two_sentences_length, 512), truncation=True, padding="max_length"),
+        lambda batch: tokenizer(batch["text"], max_length=min(max_two_sentences_length, 512), truncation=True,
+                                padding="max_length"),
         batched=True)
 
-    #     dataset = format_realnews_dataset(dataset, tokenizer).shuffle(seed=42)
     dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
     dataset = dataset.shuffle(seed=42)
-
     dataset = dataset.train_test_split(test_size=0.15)
-    print(dataset)
 
-    train_size = len(dataset['train'])
 
-    model_type = args.finetuned_model_path.replace('/', '__') if args.finetuned_model_path else args.model_type.split('/')[-1]
+    model_type = args.finetuned_model_path.replace('/', '__') if args.finetuned_model_path else \
+    args.model_type.split('/')[-1]
     if len(model_type) > 110:
         model_type = model_type[-110:] + '_etal'
 
     if args.custom_model_name:
         filename = args.custom_model_name
     else:
+        train_size = len(dataset['train'])
         filename = f"realnews_100k{'_filtered' if args.filter_dataset_based_on_nli else ''}_size_{train_size}_{model_type}_nepochs_{args.n_epochs}_lr_{args.learning_rate}_compression_{args.compression_rate}"
     if args.repeat_bucket_id_to_fixate_idea:
         filename += '_repeatbucketid'
@@ -328,7 +286,7 @@ def main(args):
         warmup_ratio=0.2,  # 0.002
         weight_decay=0.01,
         evaluation_strategy="epoch",
-        #save_total_limit=2,
+        # save_total_limit=2,
         report_to='none',
         dataloader_drop_last=True  # trying this to avoid division by zero error?
     )
@@ -339,7 +297,6 @@ def main(args):
         model = AutoModelForCausalLM.from_pretrained(args.finetuned_model_path, cache_dir=cache_dir)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.model_type, cache_dir=cache_dir)
-    print_gpu_utilization()
 
     trainer = Trainer(
         model=model,
@@ -352,8 +309,6 @@ def main(args):
 
     torch.cuda.empty_cache()
     gc.collect()
-
-    print_gpu_utilization()
     trainer.train()
     model.save_pretrained(os.path.join('finetuned_bottleself', filename))
 
@@ -369,12 +324,12 @@ if __name__ == "__main__":
     parser.add_argument('--n_epochs', type=int, default=10)
     parser.add_argument('--min_chunk_num', type=int, default=-1)
     parser.add_argument('--max_chunk_num', type=int, default=-1)
-    parser.add_argument('--dataset_paths', type=str, default=None, help="Comma separated original + summary dataset paths")
+    parser.add_argument('--dataset_paths', type=str, default=None,
+                        help="Comma separated original + summary dataset paths")
     parser.add_argument('--filter_dataset_based_on_nli', action='store_true')
     parser.add_argument('--summaries_dir', type=str, default='summaries_realnews_100k')  # default = BottleEx data
     parser.add_argument('--learning_rate', type=float, default=6.25e-5)
     parser.add_argument('--compression_rate', type=float, default=0)
-    parser.add_argument('--bucket_structure_id', type=str, default="original_fourway_bucket")
     parser.add_argument('--custom_model_name', type=str, default=None)
     parser.add_argument('--repeat_bucket_id_to_fixate_idea', action='store_true')
     parser.add_argument('--min_samples_per_class_in_rebalanced_dataset', type=int, default=3000)
@@ -383,7 +338,4 @@ if __name__ == "__main__":
     parser.add_argument('--fluency_ratio_boundary', type=float, default=None)
 
     args = parser.parse_args()
-    assert args.bucket_structure_id in BUCKET_STRUCTURES
-
-    # wandb.init(project="finetune_with_control_code")
     main(args)

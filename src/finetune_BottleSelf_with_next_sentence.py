@@ -16,7 +16,6 @@ filtered_datasets_dir = 'filtered-datasets'
 if not torch.cuda.is_available():
     cache_dir = './.cache'
 
-from pynvml import *
 
 DELIMITER = ' TL;DR: '
 DELIMITER_BETWEEN_SENTENCES = 'Ξ'
@@ -28,13 +27,6 @@ max_sentence_length = 200
 max_two_sentences_length = max_sentence_length * 2
 
 
-def print_gpu_utilization():
-    nvmlInit()
-    handle = nvmlDeviceGetHandleByIndex(0)
-    info = nvmlDeviceGetMemoryInfo(handle)
-    print(f"GPU memory occupied: {info.used // 1024 ** 2} MB.")
-
-
 def load_summary_dataset_as_pairs(summary_path, chunk_list=None):
     import re
     original_sentence_path = 'outputs/realnews_100k'
@@ -43,7 +35,6 @@ def load_summary_dataset_as_pairs(summary_path, chunk_list=None):
     visited_chunks = set()
     dataset_lines = []
     for summary_filename in os.listdir(summary_path):
-        print('summary_filename', summary_filename)
         if summary_file_regex.match(summary_filename):
             with open(os.path.join(summary_path, summary_filename), 'r') as f_summary:
                 summaries = [line.strip() for line in f_summary.readlines()]
@@ -113,7 +104,6 @@ def add_column_log_probability(model_gpt2, tokenizer_gpt2, dataset, device, max_
         lambda x: tokenizer_gpt2(x[column_to_tokenize], max_length=max_length, truncation=True, padding="longest"),
         batched=True
     )
-    print_gpu_utilization()
     logprob = []
     for row in dataset:
         input_ids = torch.tensor(row['input_ids'], device=device)
@@ -174,11 +164,12 @@ def precompute_for_next_sentence_filtering(dataset, model_gpt2, tokenizer_gpt2, 
 
 
 def main(args):
-    if args.min_chunk_num == -1 and not args.chunk_list:
-        chunk_list = None
+    if args.chunk_list:
+        chunk_list = [int(t) for t in args.chunk_list.split(',')]
+    elif args.min_chunk_num > -1:
+        chunk_list = list(range(args.min_chunk_num, args.max_chunk_num + 1))
     else:
-        chunk_list = [int(t) for t in args.chunk_list.split(',')] if args.chunk_list else list(
-            range(args.min_chunk_num, args.max_chunk_num + 1))
+        chunk_list = None
 
     print('chunk_list', chunk_list)
     dataset_lines = load_summary_dataset_as_pairs(args.summaries_dir, chunk_list=chunk_list)
@@ -199,20 +190,18 @@ def main(args):
     print('compression_rate', args.compression_rate)
 
     if args.filter_dataset_based_on_nli:
-        model_wanli = AutoModelForSequenceClassification.from_pretrained('alisawuffles/roberta-large-wanli',
-                                                                         cache_dir=cache_dir)
+        model_wanli = AutoModelForSequenceClassification.from_pretrained(
+            'alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
         tokenizer_wanli = AutoTokenizer.from_pretrained('alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
         dataset = dataset.map(
             lambda x: tokenizer_wanli(x["s1"], x["s1_summary"], max_length=500, truncation=True, padding="max_length"),
             batched=True)
 
         trainer = Trainer(model=model_wanli, eval_dataset=dataset)
-        print(dataset)
         predictions_tmp = trainer.predict(dataset).predictions
         predicted_label_ids = predictions_tmp.argmax(axis=1).tolist()
         predictions = [model_wanli.config.id2label[p] for p in predicted_label_ids]
         dataset = dataset.add_column("wanli_prediction", predictions)
-
         dataset = dataset.filter(lambda x: x['wanli_prediction'] == 'entailment')
 
         del model_wanli
@@ -269,7 +258,6 @@ def main(args):
     dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])  # MSCLAR added attention mask May 24
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.train_test_split(test_size=0.15)
-    print(dataset)
 
     train_size = len(dataset['train'])
 
@@ -303,7 +291,6 @@ def main(args):
         model = AutoModelForCausalLM.from_pretrained(args.finetuned_model_path, cache_dir=cache_dir)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.model_type, cache_dir=cache_dir)
-    print_gpu_utilization()
 
     trainer = Trainer(
         model=model,
@@ -316,8 +303,6 @@ def main(args):
 
     torch.cuda.empty_cache()
     gc.collect()
-
-    print_gpu_utilization()
     trainer.train()
     model.save_pretrained(os.path.join('finetuned_bottleself', filename))
 
@@ -339,7 +324,7 @@ if __name__ == "__main__":
     parser.add_argument('--summaries_dir', type=str,
                         default='summaries_gpt3_curie_realnews_100k')  # default = BottleEx data
     parser.add_argument('--learning_rate', type=float, default=6.25e-5)
-    parser.add_argument('--compression_rate', type=float, default=0)  # iff train_from_wanli_gpt3_dataset=True
+    parser.add_argument('--compression_rate', type=float, default=0)
     parser.add_argument('--filter_by_next_sentence_probability', action='store_true')
     parser.add_argument('--max_diff_nsp_score', type=float, default=6)
     parser.add_argument('--custom_token', type=str, default='')

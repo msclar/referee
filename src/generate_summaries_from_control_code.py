@@ -1,13 +1,11 @@
 # MSCLAR note: code extracted from https://huggingface.co/blog/how-to-generate
 
 import argparse
-import json
 import os
-import random
-import torch
 
-from datasets import load_dataset, DatasetDict, Dataset
-from transformers import EvalPrediction, AutoTokenizer, TrainingArguments, AutoModelForCausalLM
+import torch
+from datasets import Dataset
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from finetune_with_control_code import PROMPT_FORMAT, CONTROL_CODE_TOKEN, BUCKET_STRUCTURES, \
     END_TOKEN_GENERATIONS, DELIMITER, max_sentence_length
@@ -26,7 +24,8 @@ cache_dir = os.path.join(data_dir, '.cache')
 INVALID_SYMBOL_IN_ORIGINAL_SENTENCE = 'INVALID_SYMBOL_IN_ORIGINAL_SENTENCE_HENCE_SKIPPING_LINE'
 
 
-def load_unseen_realnews_dataset(original_sentence_path, delim, end_token, chunk_id_to_search, compression_rate_bucket, max_sentences=-1):
+def load_unseen_realnews_dataset(original_sentence_path, delim, end_token, chunk_id_to_search, compression_rate_bucket,
+                                 max_sentences=-1):
     import re
     file_regex = re.compile('^realnews_s1_chunk_[0-9]+.txt$')
 
@@ -58,7 +57,8 @@ def load_unseen_realnews_dataset(original_sentence_path, delim, end_token, chunk
            invalid_ids_dict
 
 
-def load_any_dataset(original_sentence_filename, delim, end_token, chunk_id_to_search, compression_rate_bucket, max_sentences=-1):
+def load_any_dataset(original_sentence_filename, delim, end_token, chunk_id_to_search, compression_rate_bucket,
+                     max_sentences=-1):
     dataset_lines = []
     valid_ids_dict = {}
     invalid_ids_dict = {}
@@ -92,7 +92,8 @@ def main(args):
     print(extended_decoding)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_type)
-    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI') or args.model_type.startswith('stanford-crfm'):
+    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI') or args.model_type.startswith(
+            'stanford-crfm'):
         tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"  # for batch generation
 
@@ -151,7 +152,7 @@ def main(args):
                     'outputs/realnews_100k', delim=DELIMITER, end_token=END_TOKEN_GENERATIONS,
                     chunk_id_to_search=chunk_id, compression_rate_bucket=compression_rate_bucket_repetitions,
                     max_sentences=args.max_sentences)
-            #dataset = dataset.map(
+            # dataset = dataset.map(
             #    lambda batch: tokenizer(batch["text"], max_length=max_two_sentence_sizes, truncation=True, padding="longest"),
             #    batched=True)
             print(dataset)
@@ -171,18 +172,21 @@ def main(args):
                 max_char_length = 0
                 while upperbound < len(dataset):
                     max_char_length = max(max_char_length, len(dataset["text"][upperbound]))
-                    if lowerbound < upperbound and max_char_length * (upperbound + 1 - lowerbound) >= args.max_constant:  # prev 1750
+                    if lowerbound < upperbound and max_char_length * (
+                            upperbound + 1 - lowerbound) >= args.max_constant:  # prev 1750
                         break
                     upperbound += 1
                 print('max_char_length', max_char_length, upperbound + 1 - lowerbound)
 
                 sentences = dataset["text"][lowerbound:upperbound]
-                inputs = tokenizer(sentences, max_length=max_sentence_length, truncation=True, padding="longest", return_tensors='pt')
+                inputs = tokenizer(sentences, max_length=max_sentence_length, truncation=True, padding="longest",
+                                   return_tensors='pt')
 
                 new_params = params.copy()
                 new_params['input_ids'] = inputs['input_ids'].to(device)
                 new_params['attention_mask'] = inputs['attention_mask'].to(device)
-                new_params['num_return_sequences'] = 1 if not args.select_from_top_n_beams else args.n_beams  # sample_output will be [num_return_sequences * batch_size, 2 * max_sentence_len]
+                new_params[
+                    'num_return_sequences'] = 1 if not args.select_from_top_n_beams else args.n_beams  # sample_output will be [num_return_sequences * batch_size, 2 * max_sentence_len]
                 # does not work for lambda because it is two characters :(
                 new_params['eos_token_id'] = end_token_token_id  # to stop generating when all batch reached this
                 new_params['max_length'] = new_params['input_ids'].shape[1] + max_sentence_length + 2
@@ -197,8 +201,8 @@ def main(args):
 
                     found_bucket_token_id = False
                     for j, t in enumerate(tokens):
-                        if all(tokens[j+k] == delimiter_token_ids[k] for k in range(len(delimiter_token_ids))):
-                            tokens = tokens[j+len(delimiter_token_ids):]
+                        if all(tokens[j + k] == delimiter_token_ids[k] for k in range(len(delimiter_token_ids))):
+                            tokens = tokens[j + len(delimiter_token_ids):]
                             found_bucket_token_id = True
                             break
 
@@ -232,7 +236,9 @@ def main(args):
 
             tmp = BUCKET_STRUCTURES[args.bucket_structure_id][compression_rate_bucket]
 
-            with open(os.path.join(output_dir, model_dir, extended_decoding, f'summaries_chunk_{chunk_id}_compression_range_{tmp[0]}-{tmp[1]}.txt'), 'w') as outfile:
+            with open(os.path.join(output_dir, model_dir, extended_decoding,
+                                   f'summaries_chunk_{chunk_id}_compression_range_{tmp[0]}-{tmp[1]}.txt'),
+                      'w') as outfile:
                 for entry in final_generated_texts:
                     outfile.write(entry)
                     outfile.write('\n')
