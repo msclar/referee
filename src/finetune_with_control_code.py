@@ -7,7 +7,6 @@ from collections import Counter
 import numpy as np
 import torch
 from datasets import Dataset, concatenate_datasets
-from pynvml import *
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, \
     AutoModelForCausalLM, AutoModelForSequenceClassification
 
@@ -132,23 +131,6 @@ def load_summary_dataset_as_pairs(summary_path, dataset_paths, min_chunk_num=-1,
     return dataset_lines
 
 
-def rebalance_dataset(dataset, min_samples):
-    most_common_compression_rates = Counter(dataset['compression_rate_bucket']).most_common()
-    if most_common_compression_rates[0][1] >= min_samples:
-        max_per_class = min([v for k, v in most_common_compression_rates if v >= min_samples])
-    else:
-        max_per_class = most_common_compression_rates[0][1]
-
-    all_datasets = []
-    compression_rate_buckets = list(set(dataset['compression_rate_bucket']))
-    for cr in compression_rate_buckets:
-        tmp = dataset.filter(lambda x: x['compression_rate_bucket'] == cr).shuffle(seed=42)
-        tmp = Dataset.from_dict(tmp[:max_per_class])
-        all_datasets.append(tmp)
-
-    return concatenate_datasets(all_datasets)
-
-
 def rebalance_dataset_respecting_order(dataset, min_samples):
     # Assumption is that a lower step model is preferrable, since each training step adds the possibility of drifting
 
@@ -202,21 +184,14 @@ def main(args):
 
         trainer = Trainer(model=model_wanli, eval_dataset=dataset)
         predictions_tmp = trainer.predict(dataset).predictions
-        if args.min_wanli_prob:
-            predictions_probas = torch.tensor(predictions_tmp).softmax(dim=1).squeeze(0)
-            predicted_probas_entailment = predictions_probas[:, 1].tolist()
-            predictions = ['entailment' if p > args.min_wanli_prob else '' for p in predicted_probas_entailment]
-        else:
-            predicted_label_ids = predictions_tmp.argmax(axis=1).tolist()
-            predictions = [model_wanli.config.id2label[p] for p in predicted_label_ids]
+        predicted_label_ids = predictions_tmp.argmax(axis=1).tolist()
+        predictions = [model_wanli.config.id2label[p] for p in predicted_label_ids]
 
         dataset = dataset.add_column("wanli_prediction", predictions)
         dataset = dataset.filter(lambda x: x['wanli_prediction'] == 'entailment')
 
         del model_wanli
         del tokenizer_wanli
-    else:
-        pass
 
     dataset = dataset.map(lambda x: {
         "compression_rate_bucket": get_bucket(
@@ -333,7 +308,6 @@ if __name__ == "__main__":
     parser.add_argument('--custom_model_name', type=str, default=None)
     parser.add_argument('--repeat_bucket_id_to_fixate_idea', action='store_true')
     parser.add_argument('--min_samples_per_class_in_rebalanced_dataset', type=int, default=3000)
-    parser.add_argument('--min_wanli_prob', type=float, default=None)
     parser.add_argument('--filter_based_on_fluency', action='store_true')
     parser.add_argument('--fluency_ratio_boundary', type=float, default=None)
 

@@ -1,9 +1,7 @@
 # MSCLAR note: code extracted from https://huggingface.co/blog/how-to-generate
 
 import argparse
-import json
 import os
-import random
 import torch
 
 from datasets import load_dataset, DatasetDict, Dataset
@@ -13,12 +11,7 @@ from finetune_BottleSelf_with_next_sentence import PROMPT_FORMAT, DELIMITER_BETW
     END_TOKEN_GENERATIONS, max_sentence_length
 
 output_dir = 'generated-datasets'
-data_dir = '/gscratch/xlab/msclar/'
-
-if not torch.cuda.is_available():
-    data_dir = './'
-
-cache_dir = os.path.join(data_dir, '.cache')
+cache_dir = os.path.join('/gscratch/xlab/msclar/' if torch.cuda.is_available() else './', '.cache')
 INVALID_SYMBOL_IN_ORIGINAL_SENTENCE = 'INVALID_SYMBOL_IN_ORIGINAL_SENTENCE_HENCE_SKIPPING_LINE'
 
 

@@ -15,14 +15,8 @@ if not torch.cuda.is_available():
 
 DELIMITER = ' TL;DR: '
 END_TOKEN_GENERATIONS = 'Δ'  # tokenizer.eos_token
-
-
-def format_realnews_dataset(dataset_input, tokenizer):
-    dataset = dataset_input.map(
-        lambda batch: tokenizer(batch["text"], max_length=200, truncation=True, padding="max_length"),
-        batched=True)
-    dataset.set_format(type="torch", columns=["input_ids"])
-    return dataset
+FULL_SENTENCE_FORMAT = "{original_sentence} {DELIMITER} {summary}{END_TOKEN_GENERATIONS}"
+PROMPT_FORMAT = "{original_sentence} {DELIMITER}"  # to generate summary
 
 
 def load_summary_dataset_as_pairs(summary_path, chunk_list=None):
@@ -56,18 +50,6 @@ def load_summary_dataset_as_pairs(summary_path, chunk_list=None):
         0 / 0
 
     return dataset_lines
-
-
-def load_summary_dataset(summary_path, delim, end_token, chunk_list):
-    dataset_lines = load_summary_dataset_as_pairs(summary_path, chunk_list=chunk_list)
-    result = []
-    for s1, s1_summary in dataset_lines:
-        if delim in s1 or delim in s1_summary or end_token in s1 or end_token in s1_summary:
-            print(s1, s1_summary)
-            continue
-        result.append(s1 + f' {delim} ' + s1_summary + end_token)
-
-    return Dataset.from_dict({'text': result})
 
 
 def main(args):
@@ -109,12 +91,25 @@ def main(args):
         torch.cuda.empty_cache()
         gc.collect()
 
-    dataset = dataset.map(lambda x: {"text": x['s1'] + f' {DELIMITER} ' + x['s1_summary'] + END_TOKEN_GENERATIONS})
+    dataset = dataset.map(
+        lambda x: {"text":
+            FULL_SENTENCE_FORMAT.format(
+                original_sentence=x['s1'],
+                DELIMITER=DELIMITER,
+                summary=x['s1_summary'],
+                END_TOKEN_GENERATIONS=END_TOKEN_GENERATIONS
+            )
+        }
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model_type, cache_dir=cache_dir)
     if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI'):
         tokenizer.pad_token = tokenizer.eos_token  # required for GPT2 but not RoBERTa
 
-    dataset = format_realnews_dataset(dataset, tokenizer).shuffle(seed=42)
+    dataset = dataset.map(
+        lambda batch: tokenizer(batch["text"], max_length=200, truncation=True, padding="max_length"),
+        batched=True)
+    dataset.set_format(type="torch", columns=["input_ids"])
+    dataset = dataset.shuffle(seed=42)
     dataset = dataset.train_test_split(test_size=0.15)
 
     model_type = args.finetuned_model_path.replace('/', '__') if args.finetuned_model_path else args.model_type.split('/')[-1]
@@ -180,12 +175,10 @@ if __name__ == "__main__":
     parser.add_argument('--filter_dataset_based_on_nli', action='store_true')
     parser.add_argument('--summaries_dir', type=str, default='summaries_realnews_100k')  # default = BottleEx data
     parser.add_argument('--learning_rate', type=float, default=6.25e-5)
-    parser.add_argument('--compression_rate', type=float, default=0)  # iff train_from_wanli_gpt3_dataset=True
+    parser.add_argument('--compression_rate', type=float, default=0)
     parser.add_argument('--chunk_list', type=str, default='')
     parser.add_argument('--custom_token', type=str, default='')
     parser.add_argument('--custom_model_name', type=str, default=None)
-
-    # parser.add_argument('--lm_coef', type=float, default=0.9)
 
     args = parser.parse_args()
     main(args)

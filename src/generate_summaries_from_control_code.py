@@ -10,16 +10,8 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from finetune_with_control_code import PROMPT_FORMAT, CONTROL_CODE_TOKEN, BUCKET_STRUCTURES, \
     END_TOKEN_GENERATIONS, DELIMITER, max_sentence_length
 
-discrimination_data_path = 'grover-models/discrimination-data'
-finetuned_models_dir = 'finetuned-models'
 output_dir = 'generated-datasets'
-data_dir = '/gscratch/xlab/msclar/'
-
-if not torch.cuda.is_available():
-    data_dir = './'
-    discrimination_data_path = './'
-
-cache_dir = os.path.join(data_dir, '.cache')
+cache_dir = os.path.join('/gscratch/xlab/msclar/' if torch.cuda.is_available() else './', '.cache')
 # max_two_sentence_sizes = 200
 INVALID_SYMBOL_IN_ORIGINAL_SENTENCE = 'INVALID_SYMBOL_IN_ORIGINAL_SENTENCE_HENCE_SKIPPING_LINE'
 
@@ -152,11 +144,6 @@ def main(args):
                     'outputs/realnews_100k', delim=DELIMITER, end_token=END_TOKEN_GENERATIONS,
                     chunk_id_to_search=chunk_id, compression_rate_bucket=compression_rate_bucket_repetitions,
                     max_sentences=args.max_sentences)
-            # dataset = dataset.map(
-            #    lambda batch: tokenizer(batch["text"], max_length=max_two_sentence_sizes, truncation=True, padding="longest"),
-            #    batched=True)
-            print(dataset)
-            print('invalid_ids_by_chunk_id', invalid_ids_by_chunk_id)
 
             generated_texts = []
 

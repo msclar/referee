@@ -8,12 +8,7 @@ from transformers import EvalPrediction, AutoTokenizer, TrainingArguments, AutoM
 from finetune_BottleSelf_new import END_TOKEN_GENERATIONS, DELIMITER
 
 output_dir = 'generated-datasets'
-data_dir = '/gscratch/xlab/msclar/'
-
-if not torch.cuda.is_available():
-    data_dir = './'
-
-cache_dir = os.path.join(data_dir, '.cache')
+cache_dir = os.path.join('/gscratch/xlab/msclar/' if torch.cuda.is_available() else './', '.cache')
 max_sentence_length = 200
 INVALID_SYMBOL_IN_ORIGINAL_SENTENCE = 'INVALID_SYMBOL_IN_ORIGINAL_SENTENCE_HENCE_SKIPPING_LINE'
 

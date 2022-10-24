@@ -187,7 +187,6 @@ def main(args):
     dataset = dataset.filter(
         lambda x: END_TOKEN_GENERATIONS not in x['s1'] and END_TOKEN_GENERATIONS not in x['s1_summary'])
     dataset = dataset.filter(lambda x: (1 - args.compression_rate) * len(x['s1']) > len(x['s1_summary']))
-    print('compression_rate', args.compression_rate)
 
     if args.filter_dataset_based_on_nli:
         model_wanli = AutoModelForSequenceClassification.from_pretrained(
@@ -255,7 +254,7 @@ def main(args):
         lambda batch: tokenizer(batch["text"], max_length=max_two_sentences_length, truncation=True,
                                 padding="longest"),  # used to be =200 for the first experiment
         batched=True)
-    dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])  # MSCLAR added attention mask May 24
+    dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.train_test_split(test_size=0.15)
 
@@ -330,7 +329,6 @@ if __name__ == "__main__":
     parser.add_argument('--custom_token', type=str, default='')
 
     args = parser.parse_args()
-    # wandb.init(project="finetune_BottleSelf_new")
     assert args.filter_by_next_sentence_probability
     if not args.filter_dataset_based_on_nli:
         print("WARNING: are you sure you do not want WANLI?!")
