@@ -62,7 +62,6 @@ def load_any_dataset(original_sentence_filename, delim, end_token, chunk_id_to_s
 
 
 def main(args):
-    assert args.n_beams
     extended_decoding = f'p=None-temp=None-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
 
     if args.filepath_to_summarize:
@@ -84,11 +83,10 @@ def main(args):
     params = {
         'do_sample': True,
         'max_length': max_sentence_length * 2,
-        'repetition_penalty': args.repetition_penalty
+        'repetition_penalty': args.repetition_penalty,
+        'num_beams': args.n_beams,
+        'early_stopping': True
     }
-    if args.n_beams:
-        params['num_beams'] = args.n_beams
-        params['early_stopping'] = True
 
     model_dir = args.finetuned_model_path.replace('/', '')
     model_dir = model_dir[len('finetuned_bottleself'):] if model_dir.startswith('finetuned_bottleself') else model_dir
@@ -180,9 +178,7 @@ def main(args):
         final_generated_texts = [INVALID_SYMBOL_IN_ORIGINAL_SENTENCE for _ in range(max_id + 1)]
 
         assert len(valid_ids) == len(generated_texts) if args.max_sentences == -1 else True
-        print(len(valid_ids), len(invalid_ids), len(generated_texts), max_id)
         for i, t in zip(valid_ids, generated_texts):
-            print(i)
             final_generated_texts[i] = t
 
         with open(os.path.join(output_dir, model_dir, extended_decoding, f'summaries_chunk_{chunk_id}.txt'), 'w') as outfile:

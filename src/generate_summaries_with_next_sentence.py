@@ -81,21 +81,12 @@ def load_any_dataset(original_sentence_filename, next_sentence_filename, delim, 
 
 
 def main(args):
-    assert args.top_p or args.top_k or args.n_beams
-
-    if args.top_p:
-        top_p_string = f'{args.top_p:.2f}' if args.top_p else 'None'
-        extended_decoding = f'p={top_p_string}-temp={args.temperature}-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
-    else:
-        extended_decoding = f'p=None-temp={args.temperature}-k={args.top_k}-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
-
+    extended_decoding = f'p=None-temp=None-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
     if args.filepath_to_summarize:
         extended_decoding = args.filepath_to_summarize + "__" + args.next_sentence_filepath_to_summarize
-    print(extended_decoding)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_type)
-    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI') or args.model_type.startswith('stanford-crfm'):
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"  # for batch generation
 
     if args.device:
@@ -108,17 +99,10 @@ def main(args):
     params = {
         'do_sample': True,
         'max_length': max_sentence_length * 2,
-        'repetition_penalty': args.repetition_penalty
+        'repetition_penalty': args.repetition_penalty,
+        'num_beams': args.n_beams,
+        'early_stopping': True
     }
-    if args.temperature:
-        params['temperature'] = args.temperature
-    if args.top_k:
-        params['top_k'] = args.top_k
-    if args.top_p:
-        params['top_p'] = args.top_p
-    if args.n_beams:
-        params['num_beams'] = args.n_beams
-        params['early_stopping'] = True
 
     model_dir = args.finetuned_model_path.replace('/', '')
     model_dir = model_dir[len('finetuned_bottleself'):] if model_dir.startswith('finetuned_bottleself') else model_dir
@@ -143,7 +127,6 @@ def main(args):
         dataset = dataset.map(
             lambda batch: tokenizer(batch["text"], max_length=max_sentence_length, truncation=True, padding="longest"),
             batched=True)
-        print(dataset)
 
         generated_texts = []
 
@@ -163,7 +146,6 @@ def main(args):
                         upperbound + 1 - lowerbound) >= args.max_constant:  # prev 1750
                     break
                 upperbound += 1
-            print('max_char_length', max_char_length, upperbound + 1 - lowerbound)
 
             sentences = dataset["text"][lowerbound:upperbound]
             inputs = tokenizer(
@@ -205,7 +187,6 @@ def main(args):
                 full_text_decoded = tokenizer.decode(tokens, skip_special_tokens=True)
                 tmp[i]['article'] = full_text_decoded.strip()
 
-            print('lala', tmp)
             generated_texts.extend([e['article'] for e in tmp])
 
         valid_ids = valid_ids_by_chunk_id[chunk_id]
@@ -218,9 +199,7 @@ def main(args):
         final_generated_texts = [INVALID_SYMBOL_IN_ORIGINAL_SENTENCE for _ in range(max_id + 1)]
 
         assert len(valid_ids) == len(generated_texts) if args.max_sentences == -1 else True
-        print(len(valid_ids), len(invalid_ids), len(generated_texts), max_id)
         for i, t in zip(valid_ids, generated_texts):
-            print(i)
             final_generated_texts[i] = t
 
         with open(os.path.join(output_dir, model_dir, extended_decoding, f'summaries_chunk_{chunk_id}.txt'), 'w') as outfile:
@@ -236,10 +215,7 @@ if __name__ == "__main__":
     parser.add_argument('--finetuned_model_path', type=str)
     parser.add_argument('--model_type', type=str, default='gpt2')
 
-    parser.add_argument('--top_p', type=float, default=None)
-    parser.add_argument('--temperature', type=float, default=None)
-    parser.add_argument('--top_k', type=int, default=None)
-    parser.add_argument('--n_beams', type=int, default=None)
+    parser.add_argument('--n_beams', type=int, required=True)
 
     parser.add_argument('--max_sentences', type=int, default=-1)
     parser.add_argument('--repetition_penalty', type=float, default=1.0)

@@ -71,22 +71,12 @@ def load_any_dataset(original_sentence_filename, delim, end_token, chunk_id_to_s
 
 
 def main(args):
-    assert args.top_p or args.top_k or args.n_beams
-
-    if args.top_p:
-        top_p_string = f'{args.top_p:.2f}' if args.top_p else 'None'
-        extended_decoding = f'p={top_p_string}-temp={args.temperature}-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
-    else:
-        extended_decoding = f'p=None-temp={args.temperature}-k={args.top_k}-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
-
+    extended_decoding = f'p=None-temp=None-k=None-reppen={args.repetition_penalty}-nbeams-{args.n_beams}'
     if args.filepath_to_summarize:
         extended_decoding = args.filepath_to_summarize
-    print(extended_decoding)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_type)
-    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI') or args.model_type.startswith(
-            'stanford-crfm'):
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"  # for batch generation
 
     if args.device:
@@ -99,17 +89,10 @@ def main(args):
     params = {
         'do_sample': True,
         'max_length': max_sentence_length * 2,
-        'repetition_penalty': args.repetition_penalty
+        'repetition_penalty': args.repetition_penalty,
+        'num_beams': args.n_beams,
+        'early_stopping': True
     }
-    if args.temperature:
-        params['temperature'] = args.temperature
-    if args.top_k:
-        params['top_k'] = args.top_k
-    if args.top_p:
-        params['top_p'] = args.top_p
-    if args.n_beams:
-        params['num_beams'] = args.n_beams
-        params['early_stopping'] = True
 
     model_dir = args.finetuned_model_path.replace('/', '')
     model_dir = model_dir[len('finetuned_bottleself'):] if model_dir.startswith('finetuned_bottleself') else model_dir
@@ -238,11 +221,7 @@ if __name__ == "__main__":
     parser.add_argument('--finetuned_model_path', type=str)
     parser.add_argument('--model_type', type=str, default='gpt2')
 
-    parser.add_argument('--top_p', type=float, default=None)
-    parser.add_argument('--temperature', type=float, default=None)
-    parser.add_argument('--top_k', type=int, default=None)
     parser.add_argument('--n_beams', type=int, default=None)
-
     parser.add_argument('--max_constant', type=int, default=1700)
     parser.add_argument('--max_sentences', type=int, default=-1)
     parser.add_argument('--repetition_penalty', type=float, default=1.0)
