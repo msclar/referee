@@ -10,8 +10,11 @@ from datasets import Dataset, concatenate_datasets
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, \
     AutoModelForCausalLM, AutoModelForSequenceClassification
 
+from finetune_referee_distill import filter_dataset_based_on_nli
+
 cache_dir = '/gscratch/xlab/msclar/.cache'
 filtered_datasets_dir = 'filtered-datasets'
+finetuned_models_path = 'finetuned-models/referee-control'
 
 if not torch.cuda.is_available():
     cache_dir = './.cache'
@@ -154,6 +157,24 @@ def rebalance_dataset_respecting_order(dataset, min_samples):
     return concatenate_datasets(all_datasets)
 
 
+def filter_based_on_fluency(dataset):
+    model_gpt2 = AutoModelForCausalLM.from_pretrained('gpt2-large', cache_dir=cache_dir)
+    model_gpt2.eval()
+    model_gpt2.to('cuda' if torch.cuda.is_available() else 'cpu')
+
+    tokenizer_gpt2 = AutoTokenizer.from_pretrained('gpt2-large', cache_dir=cache_dir)
+    tokenizer_gpt2.pad_token = tokenizer_gpt2.eos_token
+
+    dataset = dataset.filter(
+        lambda x: get_average_logprobs(model_gpt2, tokenizer_gpt2, x['s1_summary']) / get_average_logprobs(
+            model_gpt2, tokenizer_gpt2, x['s1']) < args.fluency_ratio_boundary,
+        batched=False)
+    del model_gpt2
+    del tokenizer_gpt2
+
+    return dataset
+
+
 def main(args):
     # assumption: args.dataset_paths will be given in descending order of perceived quality to the user
     dataset_lines = load_summary_dataset_as_pairs(
@@ -177,75 +198,42 @@ def main(args):
         dataset, min_samples=4 * args.min_samples_per_class_in_rebalanced_dataset)
 
     if args.filter_dataset_based_on_nli:
-        model_wanli = AutoModelForSequenceClassification.from_pretrained(
-            'alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
-        tokenizer_wanli = AutoTokenizer.from_pretrained('alisawuffles/roberta-large-wanli', cache_dir=cache_dir)
+        dataset = filter_dataset_based_on_nli(dataset, max_length=500)
 
-        dataset = dataset.map(
-            lambda x: tokenizer_wanli(x["s1"], x["s1_summary"], max_length=500, truncation=True, padding="max_length"),
-            batched=True)
-
-        trainer = Trainer(model=model_wanli, eval_dataset=dataset)
-        predictions_tmp = trainer.predict(dataset).predictions
-        predicted_label_ids = predictions_tmp.argmax(axis=1).tolist()
-        predictions = [model_wanli.config.id2label[p] for p in predicted_label_ids]
-
-        dataset = dataset.add_column("wanli_prediction", predictions)
-        dataset = dataset.filter(lambda x: x['wanli_prediction'] == 'entailment')
-
-        del model_wanli
-        del tokenizer_wanli
-
-    dataset = dataset.map(lambda x: {
-        "compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']))})
+    dataset = dataset.map(lambda x: {"compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']))})
 
     dataset = dataset.map(lambda x: {"text": FULL_SENTENCE_FORMAT.format(
-        original_sentence=x['s1'], CONTROL_CODE_TOKEN=CONTROL_CODE_TOKEN,
+        original_sentence=x['s1'],
+        CONTROL_CODE_TOKEN=CONTROL_CODE_TOKEN,
         compression_rate_bucket=x['compression_rate_bucket'],
-        DELIMITER=DELIMITER, summary=x['s1_summary'], END_TOKEN_GENERATIONS=END_TOKEN_GENERATIONS)})
+        DELIMITER=DELIMITER,
+        summary=x['s1_summary'],
+        END_TOKEN_GENERATIONS=END_TOKEN_GENERATIONS
+    )})
     dataset = dataset.filter(lambda x: x['compression_rate_bucket'] != -1)
 
     if args.filter_based_on_fluency:
-        model_gpt2 = AutoModelForCausalLM.from_pretrained('gpt2-large', cache_dir=cache_dir)
-        model_gpt2.eval()
-        model_gpt2.to('cuda' if torch.cuda.is_available() else 'cpu')
-
-        tokenizer_gpt2 = AutoTokenizer.from_pretrained('gpt2-large', cache_dir=cache_dir)
-        tokenizer_gpt2.pad_token = tokenizer_gpt2.eos_token
-
-        dataset = dataset.filter(
-            lambda x: get_average_logprobs(model_gpt2, tokenizer_gpt2, x['s1_summary']) / get_average_logprobs(
-                model_gpt2, tokenizer_gpt2, x['s1']) < args.fluency_ratio_boundary,
-            batched=False)
-        del model_gpt2
-        del tokenizer_gpt2
+        dataset = filter_based_on_fluency(dataset)
 
     dataset = rebalance_dataset_respecting_order(dataset, min_samples=args.min_samples_per_class_in_rebalanced_dataset)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_type, cache_dir=cache_dir)
-    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI'):
-        tokenizer.pad_token = tokenizer.eos_token  # required for GPT2 but not RoBERTa
+    tokenizer.pad_token = tokenizer.eos_token
 
     dataset = dataset.map(
-        lambda batch: tokenizer(batch["text"], max_length=min(max_two_sentences_length, 512), truncation=True,
-                                padding="max_length"),
+        lambda batch: tokenizer(
+            batch["text"], max_length=min(max_two_sentences_length, 512), truncation=True, padding="max_length"),
         batched=True)
 
     dataset.set_format(type="torch", columns=["input_ids", "attention_mask"])
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.train_test_split(test_size=0.15)
 
-
-    model_type = args.finetuned_model_path.replace('/', '__') if args.finetuned_model_path else \
-    args.model_type.split('/')[-1]
-    if len(model_type) > 110:
-        model_type = model_type[-110:] + '_etal'
-
     if args.custom_model_name:
         filename = args.custom_model_name
     else:
-        train_size = len(dataset['train'])
-        filename = f"realnews_100k{'_filtered' if args.filter_dataset_based_on_nli else ''}_size_{train_size}_{model_type}_nepochs_{args.n_epochs}_lr_{args.learning_rate}_compression_{args.compression_rate}"
+        filtered_str = '_nli' if args.filter_dataset_based_on_nli else ''
+        filename = f"{args.custom_token}{filtered_str}_nepochs_{args.n_epochs}_lr_{args.learning_rate}_compression_{args.compression_rate}"
     filename += '_repeatbucketid'
     if args.filter_based_on_fluency:
         filename += f'_fluencyfilter_{args.fluency_ratio_boundary}'
@@ -256,37 +244,35 @@ def main(args):
         num_train_epochs=args.n_epochs,
         per_device_train_batch_size=args.batch_size,
         per_device_eval_batch_size=args.batch_size,
-        output_dir=os.path.join('finetuned_bottleself', filename),
+        output_dir=os.path.join(finetuned_models_path, filename),
         overwrite_output_dir=True,
         save_strategy="epoch",
         warmup_ratio=0.2,  # 0.002
         weight_decay=0.01,
         evaluation_strategy="epoch",
-        # save_total_limit=2,
+        save_total_limit=3,
         report_to='none',
         dataloader_drop_last=True  # trying this to avoid division by zero error?
     )
-
-    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     if args.finetuned_model_path:
         model = AutoModelForCausalLM.from_pretrained(args.finetuned_model_path, cache_dir=cache_dir)
     else:
         model = AutoModelForCausalLM.from_pretrained(args.model_type, cache_dir=cache_dir)
 
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
     trainer = Trainer(
         model=model,
         args=training_args,
         data_collator=data_collator,
         train_dataset=dataset['train'],
         eval_dataset=dataset['test'],
-        # prediction_loss_only=True,  # not in Transformers Trainer, but what does it mean?
     )
 
     torch.cuda.empty_cache()
     gc.collect()
     trainer.train()
-    model.save_pretrained(os.path.join('finetuned_bottleself', filename))
+    model.save_pretrained(os.path.join(finetuned_models_path, filename))
 
 
 if __name__ == "__main__":
