@@ -7,8 +7,8 @@ import torch
 from datasets import Dataset
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
-from finetune_with_control_code import PROMPT_FORMAT, CONTROL_CODE_TOKEN, BUCKET_STRUCTURES, \
-    END_TOKEN_GENERATIONS, DELIMITER, max_sentence_length
+from finetune_with_control_code import PROMPT_FORMAT, CONTROL_CODE_TOKEN, BUCKET_STRUCTURE, \
+    END_TOKEN_GENERATIONS, DELIMITER, max_sentence_length, repeat_bucket_id
 
 output_dir = 'generated-datasets'
 cache_dir = os.path.join('/gscratch/xlab/msclar/' if torch.cuda.is_available() else './', '.cache')
@@ -106,15 +106,12 @@ def main(args):
     end_token_token_id = 37455  # tokenizer.encode(END_TOKEN_GENERATIONS)  # beware, because encoding 'lambda' will turn into two tokens
 
     # https://github.com/huggingface/transformers/pull/7552
-    for j, compression_rate_bucket in enumerate(range(len(BUCKET_STRUCTURES[args.bucket_structure_id]))):
+    for j, compression_rate_bucket in enumerate(range(len(BUCKET_STRUCTURE))):
         if args.enumerated_bucket_ids and str(j) not in args.enumerated_bucket_ids.split(','):
             continue
         for chunk_id in range(args.min_chunk_id, args.max_chunk_id + 1):
             print('chunk_id', chunk_id)
-            if args.repeat_bucket_id_to_fixate_idea:
-                compression_rate_bucket_repetitions = " ".join([str(compression_rate_bucket) for _ in range(10)])
-            else:
-                compression_rate_bucket_repetitions = str(compression_rate_bucket)
+            compression_rate_bucket_repetitions = repeat_bucket_id(compression_rate_bucket)
 
             if args.filepath_to_summarize:
                 dataset, valid_ids_by_chunk_id, invalid_ids_by_chunk_id = load_any_dataset(
@@ -189,7 +186,6 @@ def main(args):
                     full_text_decoded = tokenizer.decode(tokens, skip_special_tokens=True)
                     tmp[i]['article'] = full_text_decoded.strip()
 
-                print('lala', tmp)
                 generated_texts.extend([e['article'] for e in tmp])
 
             valid_ids = valid_ids_by_chunk_id[chunk_id]
@@ -200,11 +196,10 @@ def main(args):
             final_generated_texts = [INVALID_SYMBOL_IN_ORIGINAL_SENTENCE for _ in range(max_id + 1)]
 
             assert len(valid_ids) == len(generated_texts) if args.max_sentences == -1 else True
-            print(len(valid_ids), len(invalid_ids), len(generated_texts), max_id)
             for i, t in zip(valid_ids, generated_texts):
                 final_generated_texts[i] = t
 
-            tmp = BUCKET_STRUCTURES[args.bucket_structure_id][compression_rate_bucket]
+            tmp = BUCKET_STRUCTURE[compression_rate_bucket]
 
             with open(os.path.join(output_dir, model_dir, extended_decoding,
                                    f'summaries_chunk_{chunk_id}_compression_range_{tmp[0]}-{tmp[1]}.txt'),
@@ -220,16 +215,13 @@ if __name__ == "__main__":
                     'and a finetuned GPT2 model, and completing with a summary.')
     parser.add_argument('--finetuned_model_path', type=str)
     parser.add_argument('--model_type', type=str, default='gpt2')
-
-    parser.add_argument('--n_beams', type=int, default=None)
+    parser.add_argument('--n_beams', type=int, required=True)
     parser.add_argument('--max_constant', type=int, default=1700)
     parser.add_argument('--max_sentences', type=int, default=-1)
     parser.add_argument('--repetition_penalty', type=float, default=1.0)
     parser.add_argument('--min_chunk_id', type=int, default=0)
     parser.add_argument('--max_chunk_id', type=int, default=99)
     parser.add_argument('--filepath_to_summarize', type=str, default='')
-    parser.add_argument('--bucket_structure_id', type=str, default="original_fourway_bucket")
-    parser.add_argument('--repeat_bucket_id_to_fixate_idea', action='store_true')
     parser.add_argument('--enumerated_bucket_ids', type=str, default='')
     parser.add_argument('--device', type=str, default='')
     parser.add_argument('--select_from_top_n_beams', action='store_true')

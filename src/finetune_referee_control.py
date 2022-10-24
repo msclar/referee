@@ -30,7 +30,7 @@ BUCKET_STRUCTURE = [(i / 10, (i + 1) / 10) for i in range(10)]
 
 
 def get_average_logprobs(model, encoder, target):
-    '''
+    """
 
     Get log probabilities over the target (by token)
     given the source.
@@ -43,7 +43,7 @@ def get_average_logprobs(model, encoder, target):
                      a preceding space
 
     And target should at least end with <|endoftext|>
-    '''
+    """
 
     torch.cuda.empty_cache()
     device = model.transformer.wte.weight.device
@@ -68,16 +68,20 @@ def get_average_logprobs(model, encoder, target):
     return np.mean(nll_list)
 
 
-def get_bucket(summary_ratio, repeat_bucket_id_to_fixate_idea):
+def repeat_bucket_id(bucket_id):
+    return " ".join([str(bucket_id) for _ in range(10)])
+
+
+def get_bucket(summary_ratio):
     bucket_id = -1
     for i, (lower, upper) in enumerate(BUCKET_STRUCTURE):
         if lower <= summary_ratio < upper:
             bucket_id = i
             break
 
-    # bucket_id = -1 means no bucket found. FIX MAY 25 2022
-    if repeat_bucket_id_to_fixate_idea and bucket_id != -1:
-        bucket_id = " ".join([str(bucket_id) for _ in range(10)])
+    # bucket_id = -1 means no bucket found
+    if bucket_id != -1:
+        bucket_id = repeat_bucket_id(bucket_id)
     return bucket_id
 
 
@@ -167,8 +171,7 @@ def main(args):
     dataset = dataset.filter(
         lambda x: END_TOKEN_GENERATIONS not in x['s1'] and END_TOKEN_GENERATIONS not in x['s1_summary'])
     dataset = dataset.filter(lambda x: (1 - args.compression_rate) * len(x['s1']) > len(x['s1_summary']))
-    dataset = dataset.map(lambda x: {
-        "compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']), args.repeat_bucket_id_to_fixate_idea)})
+    dataset = dataset.map(lambda x: {"compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']))})
     dataset = dataset.filter(lambda x: x['compression_rate_bucket'] != -1)
     dataset = rebalance_dataset_respecting_order(
         dataset, min_samples=4 * args.min_samples_per_class_in_rebalanced_dataset)
@@ -194,8 +197,7 @@ def main(args):
         del tokenizer_wanli
 
     dataset = dataset.map(lambda x: {
-        "compression_rate_bucket": get_bucket(
-            len(x['s1_summary']) / len(x['s1']), args.repeat_bucket_id_to_fixate_idea)})
+        "compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']))})
 
     dataset = dataset.map(lambda x: {"text": FULL_SENTENCE_FORMAT.format(
         original_sentence=x['s1'], CONTROL_CODE_TOKEN=CONTROL_CODE_TOKEN,
@@ -244,8 +246,7 @@ def main(args):
     else:
         train_size = len(dataset['train'])
         filename = f"realnews_100k{'_filtered' if args.filter_dataset_based_on_nli else ''}_size_{train_size}_{model_type}_nepochs_{args.n_epochs}_lr_{args.learning_rate}_compression_{args.compression_rate}"
-    if args.repeat_bucket_id_to_fixate_idea:
-        filename += '_repeatbucketid'
+    filename += '_repeatbucketid'
     if args.filter_based_on_fluency:
         filename += f'_fluencyfilter_{args.fluency_ratio_boundary}'
     print(filename)
@@ -306,7 +307,6 @@ if __name__ == "__main__":
     parser.add_argument('--learning_rate', type=float, default=6.25e-5)
     parser.add_argument('--compression_rate', type=float, default=0)
     parser.add_argument('--custom_model_name', type=str, default=None)
-    parser.add_argument('--repeat_bucket_id_to_fixate_idea', action='store_true')
     parser.add_argument('--min_samples_per_class_in_rebalanced_dataset', type=int, default=3000)
     parser.add_argument('--filter_based_on_fluency', action='store_true')
     parser.add_argument('--fluency_ratio_boundary', type=float, default=None)

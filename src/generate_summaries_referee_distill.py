@@ -69,8 +69,7 @@ def main(args):
     print(extended_decoding)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model_type)
-    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI') or args.model_type.startswith('stanford-crfm'):
-        tokenizer.pad_token = tokenizer.eos_token
+    tokenizer.pad_token = tokenizer.eos_token
     tokenizer.padding_side = "left"  # for batch generation
 
     if args.device:
