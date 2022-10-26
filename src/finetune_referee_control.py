@@ -2,22 +2,20 @@
 import argparse
 import gc
 import os
+import re
 from collections import Counter
 
 import numpy as np
 import torch
 from datasets import Dataset, concatenate_datasets
 from transformers import AutoTokenizer, DataCollatorForLanguageModeling, Trainer, TrainingArguments, \
-    AutoModelForCausalLM, AutoModelForSequenceClassification
+    AutoModelForCausalLM
 
 from finetune_referee_distill import filter_dataset_based_on_nli
 
-cache_dir = '/gscratch/xlab/msclar/.cache'
-filtered_datasets_dir = 'filtered-datasets'
+cache_dir = '/gscratch/xlab/msclar/.cache' if torch.cuda.is_available() else './.cache'
 finetuned_models_path = 'finetuned-models/referee-control'
-
-if not torch.cuda.is_available():
-    cache_dir = './.cache'
+original_sentence_path = 'data/source-sentences/realnews_100k'
 
 CONTROL_CODE_TOKEN = 'Ξ'
 DELIMITER = ' TL;DR: '
@@ -34,7 +32,6 @@ BUCKET_STRUCTURE = [(i / 10, (i + 1) / 10) for i in range(10)]
 
 def get_average_logprobs(model, encoder, target):
     """
-
     Get log probabilities over the target (by token)
     given the source.
 
@@ -104,7 +101,6 @@ def load_dataset_as_pair_from_path(original_sentences_path_filename, summary_pat
 
 
 def load_summary_dataset_as_pairs(summary_path, dataset_paths, min_chunk_num=-1, max_chunk_num=-1):
-    # MSCLAR this should be rewritten so that load_dataset_as_pair_from_path is the core function for all
     if dataset_paths:
         files = dataset_paths.split(',')
         dataset_lines = []
@@ -112,34 +108,27 @@ def load_summary_dataset_as_pairs(summary_path, dataset_paths, min_chunk_num=-1,
             dataset_lines.extend(load_dataset_as_pair_from_path(files[i], files[i + 1]))
         return dataset_lines
 
-    import re
-    original_sentence_path = 'outputs/realnews_100k'
     summary_file_regex = re.compile('^summaries_chunk_[0-9]+.txt$')
 
     dataset_lines = []
     for summary_filename in os.listdir(summary_path):
         if summary_file_regex.match(summary_filename):
-            with open(os.path.join(summary_path, summary_filename), 'r') as f_summary:
-                summaries = [line.strip() for line in f_summary.readlines()]
-
             chunk_id = int(summary_filename[len('summaries_chunk_'):-len('.txt')])
-            original_sentence_filename = f'realnews_s1_chunk_{chunk_id}.txt'
             if chunk_id > max_chunk_num >= 0 or (min_chunk_num >= 0 and chunk_id < min_chunk_num):
                 continue
-            with open(os.path.join(original_sentence_path, original_sentence_filename), 'r') as f_summary:
-                original_sentences = [line.strip() for line in f_summary.readlines()]
-                original_sentences = original_sentences[:len(summaries)]  # in case of bottleEx crashing
 
-            for s1, s1_summary in zip(original_sentences, summaries):
-                if len(s1) < 10 or len(s1_summary) <= 3:  # changed min summary length from < 1 to <= 3
-                    continue
-                dataset_lines.append((s1, s1_summary, str(os.path.join(summary_path, summary_filename))))
+            dataset_lines.extend(
+                load_dataset_as_pair_from_path(
+                    os.path.join(original_sentence_path, f'realnews_s1_chunk_{chunk_id}.txt'),
+                    os.path.join(summary_path, summary_filename)
+                )
+            )
 
     return dataset_lines
 
 
 def rebalance_dataset_respecting_order(dataset, min_samples):
-    # Assumption is that a lower step model is preferrable, since each training step adds the possibility of drifting
+    # Assumption is that a lower step model is preferable, since each training step adds the possibility of drifting
 
     most_common_compression_rates = Counter(dataset['compression_rate_bucket']).most_common()
     if most_common_compression_rates[0][1] >= min_samples:
@@ -186,7 +175,6 @@ def main(args):
          'file': [f for s, s_summ, f in dataset_lines]}
     )
 
-    # apply filters before running NLI model, since it is expensive
     dataset = dataset.filter(lambda x: DELIMITER not in x['s1'] and DELIMITER not in x['s1_summary'])
     dataset = dataset.filter(lambda x: CONTROL_CODE_TOKEN not in x['s1'] and CONTROL_CODE_TOKEN not in x['s1_summary'])
     dataset = dataset.filter(
@@ -201,7 +189,6 @@ def main(args):
         dataset = filter_dataset_based_on_nli(dataset, max_length=500)
 
     dataset = dataset.map(lambda x: {"compression_rate_bucket": get_bucket(len(x['s1_summary']) / len(x['s1']))})
-
     dataset = dataset.map(lambda x: {"text": FULL_SENTENCE_FORMAT.format(
         original_sentence=x['s1'],
         CONTROL_CODE_TOKEN=CONTROL_CODE_TOKEN,
@@ -229,11 +216,8 @@ def main(args):
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.train_test_split(test_size=0.15)
 
-    if args.custom_model_name:
-        filename = args.custom_model_name
-    else:
-        filtered_str = '_nli' if args.filter_dataset_based_on_nli else ''
-        filename = f"{args.custom_token}{filtered_str}_nepochs_{args.n_epochs}_lr_{args.learning_rate}_compression_{args.compression_rate}"
+    filtered_str = '_nli' if args.filter_dataset_based_on_nli else ''
+    filename = f"{args.custom_token}{filtered_str}_nepochs_{args.n_epochs}_compression_{args.compression_rate}"
     filename += '_repeatbucketid'
     if args.filter_based_on_fluency:
         filename += f'_fluencyfilter_{args.fluency_ratio_boundary}'
@@ -247,7 +231,7 @@ def main(args):
         output_dir=os.path.join(finetuned_models_path, filename),
         overwrite_output_dir=True,
         save_strategy="epoch",
-        warmup_ratio=0.2,  # 0.002
+        warmup_ratio=0.2,
         weight_decay=0.01,
         evaluation_strategy="epoch",
         save_total_limit=3,
@@ -289,10 +273,8 @@ if __name__ == "__main__":
     parser.add_argument('--dataset_paths', type=str, default=None,
                         help="Comma separated original + summary dataset paths")
     parser.add_argument('--filter_dataset_based_on_nli', action='store_true')
-    parser.add_argument('--summaries_dir', type=str, default='summaries_realnews_100k')  # default = BottleEx data
     parser.add_argument('--learning_rate', type=float, default=6.25e-5)
     parser.add_argument('--compression_rate', type=float, default=0)
-    parser.add_argument('--custom_model_name', type=str, default=None)
     parser.add_argument('--min_samples_per_class_in_rebalanced_dataset', type=int, default=3000)
     parser.add_argument('--filter_based_on_fluency', action='store_true')
     parser.add_argument('--fluency_ratio_boundary', type=float, default=None)

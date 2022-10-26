@@ -1,12 +1,12 @@
 import argparse
 import os
-import torch
 
-from datasets import load_dataset, DatasetDict, Dataset
-from transformers import EvalPrediction, AutoTokenizer, TrainingArguments, AutoModelForCausalLM
+import torch
+from datasets import Dataset
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 from finetune_referee_distill import END_TOKEN_GENERATIONS, DELIMITER, PROMPT_FORMAT, \
-    original_sentence_path, finetuned_models_path, cache_dir
+    original_sentence_path
 
 generated_datasets_path = 'generated-datasets/referee-distill'
 #finetuned_models_path = 'finetuned-models/referee-distill'
@@ -44,10 +44,13 @@ def load_unseen_realnews_dataset(original_sentence_path, delim, end_token, chunk
 
 
 def extract_summaries_from_generations(model, tokenizer, dataset, params, device, max_constant):
-    # batched text generation: https://github.com/huggingface/transformers/pull/7552#issue-497255933
+    """
+    Note: This rather artisanal code is to dynamically adapt
+        the number of samples to send in one batch without OOM.
+    """
 
     delimiter_token_ids = tokenizer.encode(DELIMITER)
-    end_token_token_id = 37455  # HACK: encoding of
+    end_token_token_id = 37455  # HACK: this is tokenizer.encode(DELIMITER)
 
     generated_texts = []
     lowerbound = 0
@@ -130,8 +133,8 @@ def main(args):
         'early_stopping': True
     }
 
-    model_dir = args.finetuned_model_path.replace('/', '')
-    model_dir = model_dir[len(finetuned_models_path):] if model_dir.startswith(finetuned_models_path) else model_dir
+    model_dir = args.finetuned_model_path.split('/')[-1]
+
     os.makedirs(generated_datasets_path, exist_ok=True)
     os.makedirs(os.path.join(generated_datasets_path, model_dir), exist_ok=True)
     os.makedirs(os.path.join(generated_datasets_path, model_dir, extended_decoding), exist_ok=True)

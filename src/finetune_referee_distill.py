@@ -16,6 +16,8 @@ END_TOKEN_GENERATIONS = 'Δ'  # tokenizer.eos_token
 FULL_SENTENCE_FORMAT = "{original_sentence} {DELIMITER} {summary}{END_TOKEN_GENERATIONS}"
 PROMPT_FORMAT = "{original_sentence} {DELIMITER} "
 
+max_sentence_length = 200
+
 
 def load_summary_dataset_as_pairs(summary_path, chunk_list=None):
     import re
@@ -110,21 +112,17 @@ def main(args):
         }
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_type, cache_dir=cache_dir)
-    if args.model_type.startswith('gpt2') or args.model_type.startswith('EleutherAI'):
-        tokenizer.pad_token = tokenizer.eos_token  # required for GPT2 but not RoBERTa
+    tokenizer.pad_token = tokenizer.eos_token
 
     dataset = dataset.map(
-        lambda batch: tokenizer(batch["text"], max_length=200, truncation=True, padding="max_length"),
+        lambda batch: tokenizer(batch["text"], max_length=max_sentence_length, truncation=True, padding="max_length"),
         batched=True)
     dataset.set_format(type="torch", columns=["input_ids"])
     dataset = dataset.shuffle(seed=42)
     dataset = dataset.train_test_split(test_size=0.15)
 
-    if args.custom_model_name:
-        filename = args.custom_model_name
-    else:
-        filtered_str = '_nli' if args.filter_dataset_based_on_nli else ''
-        filename = f"{args.custom_token}{filtered_str}_nepochs_{args.n_epochs}_compression_{args.compression_rate}"
+    filtered_str = '_nli' if args.filter_dataset_based_on_nli else ''
+    filename = f"{args.custom_token}{filtered_str}_nepochs_{args.n_epochs}_compression_{args.compression_rate}"
     print(filename)
 
     os.makedirs(finetuned_models_path, exist_ok=True)
@@ -181,7 +179,6 @@ if __name__ == "__main__":
     parser.add_argument('--learning_rate', type=float, default=6.25e-5)
     parser.add_argument('--compression_rate', type=float, default=0)
     parser.add_argument('--custom_token', type=str, default='')
-    parser.add_argument('--custom_model_name', type=str, default=None)
 
     args = parser.parse_args()
     main(args)
