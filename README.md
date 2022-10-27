@@ -11,21 +11,21 @@ We have released all models used in the manuscript, and highlighted the versions
 Please don't hesitate in reaching out if you are attempting to use Referee as a baseline and face any issues in running these models!
 
 ### Referee-Distill: iteratively generating shorter summaries
-|                                                                            | Hugginface API URL                                                                    |
+|                                                                            | Huggingface API URL                                                                   |
 |----------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | Referee-Distill Iteration 1                                                | [msclar/referee-distill_iter-1](https://huggingface.co/msclar/referee-distill_iter-1) |
 | Referee-Distill Iteration 2                                                | [msclar/referee-distill_iter-2](https://huggingface.co/msclar/referee-distill_iter-2) |
 | Referee-Distill Iteration 3 <br/>**(Checkpoint used in human evaluation)** | [msclar/referee-distill_iter-3](https://huggingface.co/msclar/referee-distill_iter-3) |
 
-### Referee-Distill with context filter: iteratively generating shorter summaries (using Information Bottleneck filter)
-|                                                   | Hugginface API URL                                                                                                            |
+### Referee-Distill with context filter: iteratively generating shorter summaries (Information Bottleneck filter)
+|                                                   | Huggingface API URL                                                                                                           |
 |---------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | Referee-Distill (with context filter) Iteration 1 | [msclar/referee-distill-with-context-filter_iter-1](https://huggingface.co/msclar/referee-distill-with-context-filter_iter-1) |
 | Referee-Distill (with context filter) Iteration 2 | [msclar/referee-distill-with-context-filter_iter-2](https://huggingface.co/msclar/referee-distill-with-context-filter_iter-2) |
 | Referee-Distill (with context filter) Iteration 3 | [msclar/referee-distill-with-context-filter_iter-3](https://huggingface.co/msclar/referee-distill-with-context-filter_iter-3) |
 
 ### Referee-Control: simultaneously compressing at any given compression range
-|                                                                            | Hugginface API URL                                                                    |
+|                                                                            | Huggingface API URL                                                                   |
 |----------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
 | Referee-Control Iteration 1                                                | [msclar/referee-control_iter-1](https://huggingface.co/msclar/referee-control_iter-1) |
 | Referee-Control Iteration 2                                                | [msclar/referee-control_iter-2](https://huggingface.co/msclar/referee-control_iter-2) |
@@ -38,7 +38,7 @@ Please don't hesitate in reaching out if you are attempting to use Referee as a 
 
 ## Generated data
 
-We released all the generated data from the models released above.
+We released all the generated data from the models released above. Refer to `data/README.md`.
 
 - The data released for Referee-Distill step `i` is exactly the data used in training Referee-Distill step `i+1`.
 - The data released for Referee-Control step `i` is exactly the data used in training Referee-Control step `i+1`.
@@ -51,7 +51,9 @@ We are very thankful to OpenAI for the access to their API. Following the API us
 
 **This section is only relevant if you are trying to train your own Referee model. Otherwise, please use the Huggingface API directly (see links above).**
 
-```CODE INSTRUCTIONS TO BE UPDATED HERE!```
+All training scripts may be found in `src/*.sh`. Finetuning and generating scripts are separate to be able to recover quickly in case of server issues. Modify accordingly to your use case if needed!
+
+Metrics scripts: `to be uploaded soon!`
 
 ### Paper Citation
 
@@ -59,7 +61,7 @@ If you used this code for your experiments or found it helpful, consider citing 
 
 ```
 @inproceedings{sclar2022reference,
-    title = "{B}ottle{S}um: Unsupervised and Self-supervised Sentence Summarization using the Information Bottleneck Principle",
+    title = "Referee: Reference-Free Sentence Summarization with Sharper Controllability through Symbolic Knowledge Distillation",
     author = "Sclar, Melanie  and
       West, Peter  and
       Kumar, Sachin  and

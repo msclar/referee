@@ -86,8 +86,7 @@ def main(args):
                 original_sentence_path, delim=DELIMITER, end_token=END_TOKEN_GENERATIONS,
                 chunk_id_to_search=chunk_id, compression_rate_bucket=compression_rate_bucket_repetitions)
 
-            generated_texts = extract_summaries_from_generations(
-                model, tokenizer, dataset, params, device, args.max_constant)
+            generated_texts = extract_summaries_from_generations(model, tokenizer, dataset, params, device, args)
 
             valid_ids = valid_ids_by_chunk_id[chunk_id]
             invalid_ids = invalid_ids_by_chunk_id[chunk_id]
@@ -100,7 +99,7 @@ def main(args):
 
             tmp = BUCKET_STRUCTURE[compression_rate_bucket]
             bucket_filename = f'summaries_chunk_{chunk_id}_compression_range_{tmp[0]}-{tmp[1]}.txt'
-            with open(os.path.join(original_sentence_path, model_dir, extended_decoding, bucket_filename), 'w') as g:
+            with open(os.path.join(generated_datasets_path, model_dir, extended_decoding, bucket_filename), 'w') as g:
                 for entry in final_generated_texts:
                     g.write(entry)
                     g.write('\n')

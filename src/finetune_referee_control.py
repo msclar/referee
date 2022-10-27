@@ -279,5 +279,7 @@ if __name__ == "__main__":
     parser.add_argument('--filter_based_on_fluency', action='store_true')
     parser.add_argument('--fluency_ratio_boundary', type=float, default=None)
 
+    parser.add_argument('--custom_token', type=str, required=True)
+
     args = parser.parse_args()
     main(args)

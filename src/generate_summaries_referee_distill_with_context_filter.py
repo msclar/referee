@@ -50,7 +50,7 @@ def load_unseen_realnews_dataset(original_sentence_path, delim, end_token, chunk
     return Dataset.from_dict({'text': dataset_lines}), valid_ids_dict, invalid_ids_dict
 
 
-def extract_summaries_from_generations(model, tokenizer, dataset, params, device, max_constant):
+def extract_summaries_from_generations(model, tokenizer, dataset, params, device, args):
     """
     Note: this should work identically as the non-context filter one
     (I should've unified the code early on, I know!) but there is one minor difference.
@@ -69,7 +69,6 @@ def extract_summaries_from_generations(model, tokenizer, dataset, params, device
     lowerbound = 0
     upperbound = 0
     while upperbound < len(dataset):
-        print(lowerbound)
         torch.cuda.empty_cache()
 
         # adaptative batch size
@@ -77,7 +76,7 @@ def extract_summaries_from_generations(model, tokenizer, dataset, params, device
         max_char_length = 0
         while upperbound < len(dataset):
             max_char_length = max(max_char_length, len(dataset["text"][upperbound]))
-            if lowerbound < upperbound and max_char_length * (upperbound + 1 - lowerbound) >= max_constant:
+            if lowerbound < upperbound and max_char_length * (upperbound + 1 - lowerbound) >= args.max_constant:
                 break
             upperbound += 1
 
@@ -160,8 +159,7 @@ def main(args):
             lambda batch: tokenizer(batch["text"], max_length=max_sentence_length, truncation=True, padding="longest"),
             batched=True)
 
-        generated_texts = extract_summaries_from_generations(
-            model, tokenizer, dataset, params, device, args.max_constant)
+        generated_texts = extract_summaries_from_generations(model, tokenizer, dataset, params, device, args)
 
         valid_ids = valid_ids_by_chunk_id[chunk_id]
         invalid_ids = invalid_ids_by_chunk_id[chunk_id]

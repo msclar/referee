@@ -206,7 +206,7 @@ def main(args):
     dataset = dataset.train_test_split(test_size=0.15)
 
     filtered_str = '_nli' if args.filter_dataset_based_on_nli else ''
-    filename = f"maxdiffnsp_{args.max_diff_nsp_score}{args.custom_token}{filtered_str}_nepochs_{args.n_epochs}_compression_{args.compression_rate}"
+    filename = f"{args.custom_token}{filtered_str}_maxdiffnsp_{args.max_diff_nsp_score}_nepochs_{args.n_epochs}_compression_{args.compression_rate}"
     print(filename)
 
     os.makedirs(finetuned_models_path, exist_ok=True)
